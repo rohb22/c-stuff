@@ -7,13 +7,22 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <ctype.h>
 
 
 #define N_CONN 5
 #define BUFFER_SIZE 4096
 #define MAX_PORT_ATTEMPTS 10
+#define DIR "serve"
 
 int SOCKET;
+
+char* handle_not_found(void);
+char* handle_unresolved(void);
+void close_soc(int sig);
+char* get_method(char* req);
+char* handle_get(char* req);
+
 
 void close_sock(int sig){
     printf("\nClosing socket......\n");
@@ -21,6 +30,92 @@ void close_sock(int sig){
     close(SOCKET);
     printf("Socket closed\n");
     exit(0);
+}
+
+char* get_method(char* req) {
+    static char method[5];
+    int i;
+    for(i = 0; i < strlen(req); i++) {
+        if(isspace(req[i]) != 0) break;
+        method[i] = req[i];
+    }
+    method[i] = '\0';
+    return method;
+}
+
+char *get_route(char* req){
+    
+    static char route[100];
+    for(int i = 0; i < strlen(req); i++) {
+        if(req[i] == '/'){
+            int j = 0;
+            while(isspace(req[i]) == 0) {
+                route[j] = req[i];
+                j++;
+                i++;
+            }
+            break;
+        }
+    }
+    return route;
+}
+
+char* handle_get(char* req){
+    
+    
+    char * route = get_route(req);
+    char* directory = malloc(sizeof(char) * 20);
+
+    if (strcmp(route, "/") == 0) {
+        sprintf(directory, "%s/index.html", directory);
+    } else {
+        sprintf(directory, "%s%s", directory, route);
+    }
+    
+    return directory;
+    
+    char* type = strtok(route, ".");
+    type = strtok(NULL, ".");
+    
+    static char response[BUFFER_SIZE];
+    FILE *file = fopen(directory, "r");
+    if (!file) {
+        return handle_not_found();
+    } else {
+        char content[BUFFER_SIZE] = {0};
+        fread(content, 1, BUFFER_SIZE - 1, file);
+        fclose(file);
+        snprintf(response, sizeof(response),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Length: %ld\r\n"
+                "Content-Type: text/%s\r\n"
+                "\r\n"
+                "%s",
+                strlen(content), type, content);
+    }
+    free(directory);
+    return response;
+    
+}
+
+char* handle_unresolved(){
+    char *response = 
+            "HTTP/1.1 405 Method Not Allowed\r\n"
+            "Content-Length: 25\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n"
+            "Unsupported Request Method";
+    return response;
+}
+
+char* handle_not_found(){
+    char *response =
+        "HTTP/1.1 404 Not Found\r\n"
+        "Content-Length: 13\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "404 Not Found";
+    return response;
 }
 
 
@@ -99,46 +194,19 @@ int main(int argc, char **argv ) {
         char req[BUFFER_SIZE];
         recv(sock_fd, req, sizeof req -1, 0);
 
-        printf("%s\n", req);
-        printf("%d\n",strncmp(req,"GET /HTTP",4));
-        if(strncmp(req, "GET / HTTP/1.1", 4) != 0){
-            const char *response = 
-                    "HTTP/1.1 405 Method Not Allowed\r\n"
-                    "Content-Length: 25\r\n"
-                    "Content-Type: text/plain\r\n"
-                    "\r\n"
-                    "Unsupported Request Method";
-            
-            send(sock_fd, response, strlen(response), 0);
-            close(sock_fd);
-        }
-        // open file
-        FILE *file = fopen("index.html", "r");
-        if (!file) {
-            const char *response =
-                "HTTP/1.1 404 Not Found\r\n"
-                "Content-Length: 13\r\n"
-                "Content-Type: text/plain\r\n"
-                "\r\n"
-                "404 Not Found";
-            send(sock_fd, response, strlen(response), 0);
+        char* method = get_method(req);
+        char* route = get_route(req);        
+        
+        const char* response;
+        if(strcmp(method, "GET") == 0) {
+            response = handle_get(req);
+        } else if (strcmp(method, "POST") == 0) {
+            printf("POST");
         } else {
-            char content[BUFFER_SIZE] = {0};
-            fread(content, 1, BUFFER_SIZE - 1, file);
-            fclose(file);
-
-            char response[BUFFER_SIZE];
-            snprintf(response, sizeof(response),
-                    "HTTP/1.1 200 OK\r\n"
-                    "Content-Length: %ld\r\n"
-                    "Content-Type: text/html\r\n"
-                    "\r\n"
-                    "%s",
-                    strlen(content), content);
-
-            send(sock_fd, response, strlen(response), 0);
+            handle_unresolved();
         }
-       
+        
+        send(sock_fd, response, strlen(response), 0);
         close(sock_fd);
     }
     return 0;
